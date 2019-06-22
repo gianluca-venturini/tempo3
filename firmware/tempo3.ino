@@ -1,17 +1,38 @@
 #include <avr/sleep.h>
+#include <limits.h>
 #include <SparkFun_ADXL345.h>
+#include <DS3231.h>
+#include <SoftwareSerial.h>
 
 #define INTERRUPT_PIN 2
+#define BLUETOOTH_POWER 3
+#define BLUETOOTH_SERIAL_RX 4
+#define BLUETOOTH_SERIAL_TX 5
+#define BLUETOOTH_CONNECTION_ENSTABLISHED_PIN 6
+#define BLUE_LED_PIN 9
 
 #define DOUBLE_TAP_WINDOW_MS 400
+#define LED_MULTIPLIER_CONSTANT 1000.0
+
+SoftwareSerial bluetooth(BLUETOOTH_SERIAL_RX, BLUETOOTH_SERIAL_TX);
 
 ADXL345 adxl = ADXL345();
+
+// Wether the device is supposed to log orientations
+volatile bool activeMode = false;
+
+// Whether the bluetooth is active
+bool bluetoothEnabled = false;
+// Milliseconds elapsed since bluetooth was enabled
+unsigned long int bluetoothEnabledTs = 0;
+
+// Whether the acceleromenter is sensing activity
 volatile bool active = true;
 volatile unsigned long activityStart = 0;
 
-#define HAPTIC_TIMESTAMP_BUFFER_SIZE 3
+#define HAPTIC_TIMESTAMP_BUFFER_SIZE 10
 long unsigned hapticTimestamp[HAPTIC_TIMESTAMP_BUFFER_SIZE]; // Circular buffer containing timestamp of last haptic interactions
-unsigned short hapticTimestampHead = 0;                      // Head of haptic interactions timestamp buffer
+short hapticTimestampHead = 0;                               // Head of haptic interactions timestamp buffer
 
 // This constant depends on the characteristics of the sensor
 #define ORIENTATION_THRESHOLD 58
@@ -31,6 +52,9 @@ unsigned short orientationHead = 0;             // Head of orientation buffer
 unsigned short orientationNumber = 0;           // Number of elements in orientation circular buffer
 bool orientationBufferOverflow = false;
 
+int blueLedBlinkTime = 0;
+unsigned int blueLedBlinkSpeed;
+
 typedef struct
 {
   int x;
@@ -38,10 +62,41 @@ typedef struct
   int z;
 } SensorReads;
 
+typedef struct
+{
+  unsigned long timestampStart;
+  int position;
+} TimeEvent;
+
+RTClib RTC;
+DS3231 clock;
+
+void ledControls()
+{
+  if (blueLedBlinkTime > 0)
+  {
+    analogWrite(BLUE_LED_PIN, abs(sin(blueLedBlinkTime / LED_MULTIPLIER_CONSTANT) * 255));
+    blueLedBlinkTime -= blueLedBlinkSpeed;
+  }
+}
+
+bool areLedBlinking()
+{
+  return blueLedBlinkTime > 0;
+}
+
+void startBlueLedBlink(unsigned short numBlinks, unsigned short speed = 1)
+{
+  blueLedBlinkTime = 3.1415 * LED_MULTIPLIER_CONSTANT * numBlinks;
+  blueLedBlinkSpeed = speed;
+}
+
+char deviceName[20] = "Time3";
+
 void setup()
 {
   Serial.begin(9600); // Start the serial terminal
-  Serial.println("SparkFun ADXL345 Accelerometer Hook Up Guide Example");
+  Serial.println("Time3 setup routine");
   Serial.println();
   Serial.flush();
 
@@ -63,21 +118,27 @@ void setup()
   adxl.setTapDetectionOnXYZ(1, 1, 1); // Detect taps in the directions turned ON "adxl.setTapDetectionOnX(X, Y, Z);" (1 == ON, 0 == OFF)
 
   // Set values for what is considered a TAP and what is a DOUBLE TAP (0-255)
-  adxl.setTapThreshold(20);                                  // 62.5 mg per increment
-  adxl.setTapDuration(15);                                   // 625 μs per increment
+  adxl.setTapThreshold(25);                                  // 62.5 mg per increment
+  adxl.setTapDuration(30);                                   // 625 μs per increment
   adxl.setDoubleTapLatency(80);                              // 1.25 ms per increment
   adxl.setDoubleTapWindow(int(DOUBLE_TAP_WINDOW_MS / 1.25)); // 1.25 ms per increment
 
   adxl.InactivityINT(0);
   adxl.ActivityINT(1);
   adxl.FreeFallINT(0);
-  adxl.doubleTapINT(1);
-  adxl.singleTapINT(0);
+  adxl.doubleTapINT(0);
+  adxl.singleTapINT(1);
 
   adxl.setLowPower(false);
   adxl.setRate(100);
 
+  pinMode(BLUE_LED_PIN, OUTPUT);
+  pinMode(BLUETOOTH_CONNECTION_ENSTABLISHED_PIN, INPUT);
+  pinMode(BLUETOOTH_SERIAL_TX, OUTPUT);
+  pinMode(BLUETOOTH_POWER, OUTPUT); // Activate bluetooth serial
+
   resetHapticInteractions();
+  enableBluetooth();
 }
 
 void handleDoubleTapInterrupt() {}
@@ -93,22 +154,137 @@ void sleepNow()
 
 void loop()
 {
-  Serial.flush();
-  sleepNow();
+  if (areLedBlinking())
+  {
+    ledControls();
+    return;
+  }
+  if (bluetoothEnabled == false)
+  {
+    sleepNow();
+    delay(10);
+  }
 
   ADXL_ISR();
 
-  // Before enabling this connect a Realtime Timer and use it to read real milliseconds
-  //  if (isMultipleHapticInteraction(millis(), 5000, 2)) {
-  //    Serial.print(hapticTimestamp[0]);
-  //    Serial.print(", ");
-  //    Serial.print(hapticTimestamp[1]);
-  //    Serial.print(", ");
-  //    Serial.print(hapticTimestamp[2]);
-  //    Serial.println("");
-  //    resetHapticInteractions();
-  //    Serial.println("2 interactions");
-  //  }
+  Serial.print(hapticTimestampHead);
+  Serial.print(", ");
+  Serial.print(hapticTimestamp[0]);
+  Serial.print(", ");
+  Serial.print(hapticTimestamp[1]);
+  Serial.print(", ");
+  Serial.print(hapticTimestamp[2]);
+  Serial.println("");
+  unsigned long now = getTimestamp();
+  if (activeMode)
+  {
+    if (isMultipleHapticInteraction(now, 3, 5))
+    {
+      resetHapticInteractions();
+      startBlueLedBlink(10, 4);
+      activeMode = false;
+    }
+  }
+  else
+  {
+    if (isMultipleHapticInteraction(now, 5, 10))
+    {
+      resetHapticInteractions();
+      startBlueLedBlink(2, 4);
+      activeMode = true;
+    }
+  }
+  checkBluetooth();
+  Serial.flush();
+}
+
+void checkBluetooth()
+{
+  while (bluetooth.available() > 0)
+  {
+    char inByte = bluetooth.read();
+    bool nameRequested = inByte & 0x1;
+    bool eventsRequested = inByte & 0x2;
+    char *message = buildMessage(nameRequested, eventsRequested);
+    sendBluetoothMessage(message);
+    free(message);
+  }
+}
+
+char *buildMessage(bool nameRequested, bool eventsRequested)
+{
+  // Simulates 6 events
+  TimeEvent timeEvents[] = {
+      {12345, 1},
+      {12345, 2},
+      {12345, 3},
+      {12345, 4},
+      {12345, 5},
+      {12345, 6}};
+
+  char *message = (char *)malloc(400);
+  bool firstField = true;
+  message[0] = 0x0;
+  strcat(message, "{");
+
+  if (nameRequested)
+  {
+    if (firstField == false)
+    {
+      strcat(message, ",");
+    }
+    char nameFormatted[30];
+    sprintf(nameFormatted, "\"name\":\"%s\"", deviceName);
+    strcat(message, nameFormatted);
+    firstField = false;
+  }
+
+  if (eventsRequested)
+  {
+    if (firstField == false)
+    {
+      strcat(message, ",");
+    }
+    strcat(message, "\"events\":[");
+
+    for (int i = 0; i < 6; i++)
+    {
+      char timeEventFormatted[100];
+      sprintf(timeEventFormatted, "{\"ts\":%ld, \"pos\":%d}", timeEvents[i].timestampStart, timeEvents[i].position);
+      if (i == 0)
+      {
+        strcat(message, timeEventFormatted);
+      }
+      else
+      {
+        strcat(message, ",");
+        strcat(message, timeEventFormatted);
+      }
+    }
+    strcat(message, "]");
+
+    firstField = false;
+  }
+
+  strcat(message, "}");
+
+  return message;
+}
+
+void sendBluetoothMessage(char *message)
+{
+  char messageLength[6];
+  itoa(strlen(message), messageLength, 10);
+  for (int i = 0; messageLength[i] != '\0'; i++)
+  {
+    bluetooth.write(messageLength[i]);
+  }
+  int zero = 0x0;
+  bluetooth.write(zero);
+  for (int i = 0; message[i] != '\0'; i++)
+  {
+    bluetooth.write(message[i]);
+  }
 }
 
 void readOrientation(SensorReads *sensorReads)
@@ -124,6 +300,13 @@ void readOrientation(SensorReads *sensorReads)
   Serial.print(", ");
   Serial.println(sensorReads->z);
   Serial.println(adxl.isLowPower());
+}
+
+// Returns timestamps in seconds
+unsigned long getTimestamp()
+{
+  DateTime now = RTC.now();
+  return now.unixtime();
 }
 
 void ADXL_ISR()
@@ -158,7 +341,7 @@ void ADXL_ISR()
   if (adxl.triggered(interrupts, ADXL345_ACTIVITY))
   {
     Serial.println("*** ACTIVITY ***");
-    activityStart = millis();
+    activityStart = getTimestamp();
     adxl.InactivityINT(1);
     adxl.ActivityINT(0);
     active = true;
@@ -168,18 +351,14 @@ void ADXL_ISR()
   if (adxl.triggered(interrupts, ADXL345_DOUBLE_TAP))
   {
     Serial.println("*** DOUBLE TAP ***");
-    if (active == false || millis() - activityStart < DOUBLE_TAP_WINDOW_MS)
-    {
-      Serial.println("*** ACTION ***");
-      addHapticInteraction(millis());
-    }
   }
 
   // Tap Detection
   if (adxl.triggered(interrupts, ADXL345_SINGLE_TAP))
   {
     Serial.println("*** TAP ***");
-    //add code here to do when a tap is sensed
+    unsigned long now = getTimestamp();
+    addHapticInteraction(now);
   }
 }
 
@@ -195,7 +374,12 @@ void addHapticInteraction(unsigned long timestamp)
 void resetHapticInteractions()
 {
   hapticTimestampHead = 0;
-  hapticTimestamp[hapticTimestampHead] = 0;
+  hapticTimestamp[HAPTIC_TIMESTAMP_BUFFER_SIZE - 1] = 0;
+}
+
+int positiveModule(int number, int module)
+{
+  return (number % module + module) % module;
 }
 
 // Returns true if numInteractions were executed at intaractionWindow distance between one another.
@@ -205,15 +389,14 @@ bool isMultipleHapticInteraction(unsigned long now, unsigned long interactionWin
   {
     return false;
   }
-  long int timestamp = now;
   for (int i = 0; i < numInteractions; i++)
   {
-    long int interactionTimestamp = hapticTimestamp[(hapticTimestampHead - i) % HAPTIC_TIMESTAMP_BUFFER_SIZE];
-    if (timestamp - interactionTimestamp > interactionWindow)
+    short index = positiveModule(hapticTimestampHead - i - 1, HAPTIC_TIMESTAMP_BUFFER_SIZE);
+    long int interactionTimestamp = hapticTimestamp[index];
+    if (now - interactionTimestamp > interactionWindow)
     {
       return false;
     }
-    timestamp = interactionTimestamp;
   }
   return true;
 }
@@ -288,4 +471,22 @@ void printOrientations()
       Serial.println("Buffer overflow");
     }
   }
+}
+
+void enableBluetooth()
+{
+  bluetooth.begin(9600);
+  bluetooth.listen();
+  digitalWrite(BLUETOOTH_POWER, HIGH);
+  digitalWrite(BLUETOOTH_SERIAL_TX, HIGH);
+  bluetoothEnabled = true;
+  bluetoothEnabledTs = getTimestamp();
+}
+
+void disableBluetooth()
+{
+  bluetooth.end();
+  digitalWrite(BLUETOOTH_POWER, HIGH);
+  digitalWrite(BLUETOOTH_SERIAL_TX, HIGH);
+  bluetoothEnabled = false;
 }
