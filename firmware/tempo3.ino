@@ -9,13 +9,22 @@
 #define BLUETOOTH_SERIAL_RX 4
 #define BLUETOOTH_SERIAL_TX 5
 #define BLUETOOTH_CONNECTION_ENSTABLISHED_PIN 6
+#define RED_LED_PIN 7
 #define BLUE_LED_PIN 9
 
 #define DOUBLE_TAP_WINDOW_MS 400
 #define LED_MULTIPLIER_CONSTANT 1000.0
+#define BLUE_LED_INDEX 0
+#define RED_LED_INDEX 1
 
 // Bluetooth enabled time window
 #define BLUETOOTH_ENABLED_S 10
+
+// If the battery goes below this level it will blink red led
+#define MIN_BATTERY_THRESHOLD 310
+
+// Backoff between times in which the red led blinks
+#define RED_LED_BLINK_BACKOFF_S 120
 
 SoftwareSerial bluetooth(BLUETOOTH_SERIAL_RX, BLUETOOTH_SERIAL_TX);
 
@@ -26,8 +35,10 @@ volatile bool activeMode = false;
 
 // Whether the bluetooth is active
 bool bluetoothEnabled = false;
-// Milliseconds elapsed since bluetooth was enabled
-unsigned long int bluetoothEnabledTs = 0;
+// Seconds elapsed since bluetooth was enabled
+unsigned long bluetoothEnabledTs = 0;
+// Seconds elapsed since the last red blink
+unsigned long lastRedLedBlink = 0;
 
 // Whether the acceleromenter is sensing activity
 volatile bool active = true;
@@ -62,8 +73,10 @@ unsigned short timeEventsHead = 0;             // Head of orientation buffer
 unsigned short timeEventsNumber = 0;           // Number of elements in orientation circular buffer
 bool orientationBufferOverflow = false;
 
-int blueLedBlinkTime = 0;
-unsigned int blueLedBlinkSpeed;
+// Led controls BLUE, RED
+int ledBlinkTime[2] = {0, 0};
+short int ledPin[2] = {BLUE_LED_PIN, RED_LED_PIN};
+unsigned int ledBlinkSpeed[2];
 
 typedef struct
 {
@@ -76,22 +89,32 @@ RTC_DS3231 clock;
 
 void ledControls()
 {
-  if (blueLedBlinkTime > 0)
+  for (int ledIndex = 0; ledIndex < 2; ledIndex++)
   {
-    analogWrite(BLUE_LED_PIN, abs(sin(blueLedBlinkTime / LED_MULTIPLIER_CONSTANT) * 255));
-    blueLedBlinkTime -= blueLedBlinkSpeed;
+    if (ledBlinkTime[ledIndex] > 0)
+    {
+      analogWrite(ledPin[ledIndex], abs(sin(ledBlinkTime[ledIndex] / LED_MULTIPLIER_CONSTANT) * 255));
+      ledBlinkTime[ledIndex] -= ledBlinkSpeed[ledIndex];
+    }
   }
 }
 
 bool areLedBlinking()
 {
-  return blueLedBlinkTime > 0;
+  for (int ledIndex = 0; ledIndex < 2; ledIndex++)
+  {
+    if (ledBlinkTime[ledIndex] > 0)
+    {
+      return true;
+    }
+  }
+  return false;
 }
 
-void startBlueLedBlink(unsigned short numBlinks, unsigned short speed = 1)
+void startLedBlink(unsigned short numBlinks, unsigned short speed, unsigned short ledIndex)
 {
-  blueLedBlinkTime = 3.1415 * LED_MULTIPLIER_CONSTANT * numBlinks;
-  blueLedBlinkSpeed = speed;
+  ledBlinkTime[ledIndex] = PI * LED_MULTIPLIER_CONSTANT * numBlinks;
+  ledBlinkSpeed[ledIndex] = speed;
 }
 
 char deviceName[20] = "Time3";
@@ -163,6 +186,7 @@ void loop()
     ledControls();
     return;
   }
+
   if (bluetoothEnabled == false)
   {
     sleepNow();
@@ -170,6 +194,14 @@ void loop()
   }
 
   unsigned long now = getTimestamp();
+
+  // if (getBatteryLevel() < MIN_BATTERY_THRESHOLD && now - lastRedLedBlink > RED_LED_BLINK_BACKOFF_S)
+  // {
+  //   Serial.println("Battery below threshold");
+  //   startLedBlink(10, 1, RED_LED_INDEX);
+  //   lastRedLedBlink = now;
+  //   return;
+  // }
 
   ADXL_ISR(now);
 
@@ -187,7 +219,7 @@ void loop()
     {
       // Enter inactive mode: nothing is enabled except tap
       resetHapticInteractions();
-      startBlueLedBlink(10, 4);
+      startLedBlink(10, 4, BLUE_LED_INDEX);
       activeMode = false;
     }
   }
@@ -197,7 +229,7 @@ void loop()
     {
       // Enter active mode: position is actively monitored
       resetHapticInteractions();
-      startBlueLedBlink(2, 4);
+      startLedBlink(2, 4, BLUE_LED_INDEX);
       activeMode = true;
     }
   }
@@ -229,6 +261,7 @@ void checkBluetooth()
     bool nameRequested = inByte & 0x1;
     bool eventsRequested = inByte & 0x2;
     bool adjustTime = inByte & 0x4;
+    bool batteryRequested = inByte & 0x5;
     if (adjustTime)
     {
       uint8_t timestamp0 = bluetooth.read();
@@ -250,16 +283,16 @@ void checkBluetooth()
       Serial.println(timestamp3, HEX);
       Serial.println(currentTimestamp);
     }
-    if (nameRequested || eventsRequested)
+    if (nameRequested || eventsRequested || batteryRequested)
     {
-      char *message = buildMessage(nameRequested, eventsRequested);
+      char *message = buildMessage(nameRequested, eventsRequested, batteryRequested);
       sendBluetoothMessage(message);
       free(message);
     }
   }
 }
 
-char *buildMessage(bool nameRequested, bool eventsRequested)
+char *buildMessage(bool nameRequested, bool eventsRequested, bool batteryRequested)
 {
 
   char *message = (char *)malloc(400);
@@ -276,6 +309,18 @@ char *buildMessage(bool nameRequested, bool eventsRequested)
     char nameFormatted[30];
     sprintf(nameFormatted, "\"name\":\"%s\"", deviceName);
     strcat(message, nameFormatted);
+    firstField = false;
+  }
+
+  if (batteryRequested)
+  {
+    if (firstField == false)
+    {
+      strcat(message, ",");
+    }
+    char batteryFormatted[15];
+    sprintf(batteryFormatted, "\"battery\":\"%s\"", getBatteryLevel());
+    strcat(message, batteryFormatted);
     firstField = false;
   }
 
@@ -548,4 +593,22 @@ void disableBluetooth()
   digitalWrite(BLUETOOTH_POWER, LOW);
   digitalWrite(BLUETOOTH_SERIAL_TX, LOW);
   bluetoothEnabled = false;
+}
+
+const long internalReferenceVoltage = 1062;
+
+// The result is an approximation of the battery level. 3v should be 300.
+// When battry approaching 310 is time to signal that is almost discharged
+// Below 305 bluetooth may stop working
+int getBatteryLevel()
+{
+  // REFS0 : Selects AVcc external reference
+  // MUX3 MUX2 MUX1 : Selects 1.1V (VBG)
+  ADMUX = bit(REFS0) | bit(MUX3) | bit(MUX2) | bit(MUX1);
+  ADCSRA |= bit(ADSC); // start conversion
+  while (ADCSRA & bit(ADSC))
+  {
+  }
+  int results = (((internalReferenceVoltage * 1024) / ADC) + 5) / 10;
+  return results;
 }
