@@ -353,10 +353,14 @@ void ADXL_ISR(unsigned long now)
     adxl.InactivityINT(0);
     active = false;
 
-    SensorReads sensorReads;
-    readOrientation(&sensorReads);
-    setActivePosition(&sensorReads, now);
-    printOrientations();
+    // Read position data only in active mode
+    if (activeMode)
+    {
+      SensorReads sensorReads;
+      readOrientation(&sensorReads);
+      setActivePosition(&sensorReads, now);
+      printOrientations();
+    }
   }
 
   // Activity
