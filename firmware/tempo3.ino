@@ -39,7 +39,7 @@ short hapticTimestampHead = 0;                               // Head of haptic i
 
 // This constant depends on the characteristics of the sensor
 #define ORIENTATION_THRESHOLD 58
-#define TIME_EVENTS_BUFFER_SIZE 10
+#define TIME_EVENTS_BUFFER_SIZE 50
 enum Orientation
 {
   NO_ORIENTATION = 0,
