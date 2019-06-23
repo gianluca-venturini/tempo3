@@ -1,7 +1,7 @@
 #include <avr/sleep.h>
 #include <limits.h>
 #include <SparkFun_ADXL345.h>
-#include <DS3231.h>
+#include <RTClib.h>
 #include <SoftwareSerial.h>
 
 #define INTERRUPT_PIN 2
@@ -72,8 +72,7 @@ typedef struct
   int z;
 } SensorReads;
 
-RTClib RTC;
-DS3231 clock;
+RTC_DS3231 clock;
 
 void ledControls()
 {
@@ -102,7 +101,6 @@ void setup()
   Serial.begin(9600); // Start the serial terminal
   Serial.println("Time3 setup routine");
   Serial.println();
-  Serial.flush();
 
   adxl.powerOn();               // Power on the ADXL345
   adxl.setInterruptLevelBit(1); // Interrupt active low
@@ -143,6 +141,8 @@ void setup()
 
   resetHapticInteractions();
   disableBluetooth();
+
+  Serial.flush();
 }
 
 void handleDoubleTapInterrupt() {}
@@ -183,7 +183,7 @@ void loop()
   Serial.println("");
   if (activeMode)
   {
-    if (isMultipleHapticInteraction(now, 3, 5))
+    if (isMultipleHapticInteraction(now, 5, 10))
     {
       // Enter inactive mode: nothing is enabled except tap
       resetHapticInteractions();
@@ -228,9 +228,34 @@ void checkBluetooth()
     char inByte = bluetooth.read();
     bool nameRequested = inByte & 0x1;
     bool eventsRequested = inByte & 0x2;
-    char *message = buildMessage(nameRequested, eventsRequested);
-    sendBluetoothMessage(message);
-    free(message);
+    bool adjustTime = inByte & 0x4;
+    if (adjustTime)
+    {
+      uint8_t timestamp0 = bluetooth.read();
+      uint8_t timestamp1 = bluetooth.read();
+      uint8_t timestamp2 = bluetooth.read();
+      uint8_t timestamp3 = bluetooth.read();
+      unsigned long currentTimestamp = timestamp0;
+      currentTimestamp <<= 8;
+      currentTimestamp |= timestamp1;
+      currentTimestamp <<= 8;
+      currentTimestamp |= timestamp2;
+      currentTimestamp <<= 8;
+      currentTimestamp |= timestamp3;
+      clock.adjust(currentTimestamp);
+      Serial.println("Adjusted time");
+      Serial.println(timestamp0, HEX);
+      Serial.println(timestamp1, HEX);
+      Serial.println(timestamp2, HEX);
+      Serial.println(timestamp3, HEX);
+      Serial.println(currentTimestamp);
+    }
+    if (nameRequested || eventsRequested)
+    {
+      char *message = buildMessage(nameRequested, eventsRequested);
+      sendBluetoothMessage(message);
+      free(message);
+    }
   }
 }
 
@@ -269,7 +294,7 @@ char *buildMessage(bool nameRequested, bool eventsRequested)
     {
       char timeEventFormatted[100];
       TimeEvent timeEvent = timeEvents[timeEventIndex];
-      sprintf(timeEventFormatted, "{\"ts\":%ld, \"pos\":%d}", timeEvent.timestampStart, timeEvent.orientation);
+      sprintf(timeEventFormatted, "{\"ts\":%lu, \"pos\":%d}", timeEvent.timestampStart, timeEvent.orientation);
       if (timeEventIndex == initialTimeEventIndex)
       {
         strcat(message, timeEventFormatted);
@@ -316,18 +341,19 @@ void readOrientation(SensorReads *sensorReads)
 
   // Output Results to Serial
   /* UNCOMMENT TO VIEW X Y Z ACCELEROMETER VALUES */
-  Serial.print(sensorReads->x);
-  Serial.print(", ");
-  Serial.print(sensorReads->y);
-  Serial.print(", ");
-  Serial.println(sensorReads->z);
-  Serial.println(adxl.isLowPower());
+  // Serial.print(sensorReads->x);
+  // Serial.print(", ");
+  // Serial.print(sensorReads->y);
+  // Serial.print(", ");
+  // Serial.println(sensorReads->z);
+  // Serial.println(adxl.isLowPower());
 }
 
 // Returns timestamps in seconds
 unsigned long getTimestamp()
 {
-  DateTime now = RTC.now();
+  DateTime now = clock.now();
+  Serial.println(now.unixtime());
   return now.unixtime();
 }
 
@@ -383,7 +409,6 @@ void ADXL_ISR(unsigned long now)
   if (adxl.triggered(interrupts, ADXL345_SINGLE_TAP))
   {
     Serial.println("*** TAP ***");
-    unsigned long now = getTimestamp();
     addHapticInteraction(now);
   }
 }
