@@ -14,6 +14,9 @@
 #define DOUBLE_TAP_WINDOW_MS 400
 #define LED_MULTIPLIER_CONSTANT 1000.0
 
+// Bluetooth enabled time window
+#define BLUETOOTH_ENABLED_S 10
+
 SoftwareSerial bluetooth(BLUETOOTH_SERIAL_RX, BLUETOOTH_SERIAL_TX);
 
 ADXL345 adxl = ADXL345();
@@ -36,7 +39,7 @@ short hapticTimestampHead = 0;                               // Head of haptic i
 
 // This constant depends on the characteristics of the sensor
 #define ORIENTATION_THRESHOLD 58
-#define ORIENTATION_BUFFER_SIZE 10
+#define TIME_EVENTS_BUFFER_SIZE 10
 enum Orientation
 {
   NO_ORIENTATION = 0,
@@ -47,9 +50,16 @@ enum Orientation
   Orientation_Z = 5,
   Orientation_MZ = 6,
 };
-Orientation orientation[ORIENTATION_THRESHOLD]; // Circular buffer containing orientation codes.
-unsigned short orientationHead = 0;             // Head of orientation buffer
-unsigned short orientationNumber = 0;           // Number of elements in orientation circular buffer
+
+typedef struct
+{
+  unsigned long timestampStart;
+  Orientation orientation;
+} TimeEvent;
+
+TimeEvent timeEvents[TIME_EVENTS_BUFFER_SIZE]; // Circular buffer containing time events
+unsigned short timeEventsHead = 0;             // Head of orientation buffer
+unsigned short timeEventsNumber = 0;           // Number of elements in orientation circular buffer
 bool orientationBufferOverflow = false;
 
 int blueLedBlinkTime = 0;
@@ -61,12 +71,6 @@ typedef struct
   int y;
   int z;
 } SensorReads;
-
-typedef struct
-{
-  unsigned long timestampStart;
-  int position;
-} TimeEvent;
 
 RTClib RTC;
 DS3231 clock;
@@ -138,7 +142,7 @@ void setup()
   pinMode(BLUETOOTH_POWER, OUTPUT); // Activate bluetooth serial
 
   resetHapticInteractions();
-  enableBluetooth();
+  disableBluetooth();
 }
 
 void handleDoubleTapInterrupt() {}
@@ -165,7 +169,9 @@ void loop()
     delay(10);
   }
 
-  ADXL_ISR();
+  unsigned long now = getTimestamp();
+
+  ADXL_ISR(now);
 
   Serial.print(hapticTimestampHead);
   Serial.print(", ");
@@ -175,11 +181,11 @@ void loop()
   Serial.print(", ");
   Serial.print(hapticTimestamp[2]);
   Serial.println("");
-  unsigned long now = getTimestamp();
   if (activeMode)
   {
     if (isMultipleHapticInteraction(now, 3, 5))
     {
+      // Enter inactive mode: nothing is enabled except tap
       resetHapticInteractions();
       startBlueLedBlink(10, 4);
       activeMode = false;
@@ -189,17 +195,34 @@ void loop()
   {
     if (isMultipleHapticInteraction(now, 5, 10))
     {
+      // Enter active mode: position is actively monitored
       resetHapticInteractions();
       startBlueLedBlink(2, 4);
       activeMode = true;
     }
   }
   checkBluetooth();
+
+  if (now - bluetoothEnabledTs > BLUETOOTH_ENABLED_S && !isBluetoothConnected())
+  {
+    disableBluetooth();
+  }
+
   Serial.flush();
+}
+
+boolean isBluetoothConnected()
+{
+  return digitalRead(BLUETOOTH_CONNECTION_ENSTABLISHED_PIN) == HIGH;
 }
 
 void checkBluetooth()
 {
+  if (bluetoothEnabled == false)
+  {
+    return;
+  }
+
   while (bluetooth.available() > 0)
   {
     char inByte = bluetooth.read();
@@ -213,14 +236,6 @@ void checkBluetooth()
 
 char *buildMessage(bool nameRequested, bool eventsRequested)
 {
-  // Simulates 6 events
-  TimeEvent timeEvents[] = {
-      {12345, 1},
-      {12345, 2},
-      {12345, 3},
-      {12345, 4},
-      {12345, 5},
-      {12345, 6}};
 
   char *message = (char *)malloc(400);
   bool firstField = true;
@@ -247,11 +262,15 @@ char *buildMessage(bool nameRequested, bool eventsRequested)
     }
     strcat(message, "\"events\":[");
 
-    for (int i = 0; i < 6; i++)
+    unsigned int initialTimeEventIndex = (TIME_EVENTS_BUFFER_SIZE + timeEventsHead - timeEventsNumber) % TIME_EVENTS_BUFFER_SIZE;
+    unsigned int timeEventIndex = initialTimeEventIndex;
+    unsigned int processedTimeEvents = 0;
+    while (processedTimeEvents < timeEventsNumber)
     {
       char timeEventFormatted[100];
-      sprintf(timeEventFormatted, "{\"ts\":%ld, \"pos\":%d}", timeEvents[i].timestampStart, timeEvents[i].position);
-      if (i == 0)
+      TimeEvent timeEvent = timeEvents[timeEventIndex];
+      sprintf(timeEventFormatted, "{\"ts\":%ld, \"pos\":%d}", timeEvent.timestampStart, timeEvent.orientation);
+      if (timeEventIndex == initialTimeEventIndex)
       {
         strcat(message, timeEventFormatted);
       }
@@ -260,6 +279,9 @@ char *buildMessage(bool nameRequested, bool eventsRequested)
         strcat(message, ",");
         strcat(message, timeEventFormatted);
       }
+
+      processedTimeEvents += 1;
+      timeEventIndex = (timeEventIndex + 1) % TIME_EVENTS_BUFFER_SIZE;
     }
     strcat(message, "]");
 
@@ -309,7 +331,7 @@ unsigned long getTimestamp()
   return now.unixtime();
 }
 
-void ADXL_ISR()
+void ADXL_ISR(unsigned long now)
 {
 
   // getInterruptSource clears all triggered actions after returning value
@@ -333,7 +355,7 @@ void ADXL_ISR()
 
     SensorReads sensorReads;
     readOrientation(&sensorReads);
-    setActivePosition(&sensorReads);
+    setActivePosition(&sensorReads, now);
     printOrientations();
   }
 
@@ -401,7 +423,7 @@ bool isMultipleHapticInteraction(unsigned long now, unsigned long interactionWin
   return true;
 }
 
-void setActivePosition(SensorReads *sensorReads)
+void setActivePosition(SensorReads *sensorReads, unsigned long now)
 {
   Orientation newOrientation = NO_ORIENTATION;
   if (sensorReads->x > ORIENTATION_THRESHOLD)
@@ -430,42 +452,50 @@ void setActivePosition(SensorReads *sensorReads)
   }
   if (newOrientation != lastOrientation())
   {
-    addOrientation(newOrientation);
+    handleOrientationChange(newOrientation, now);
   }
 }
 
-void addOrientation(Orientation newOrientation)
+void handleOrientationChange(Orientation newOrientation, unsigned long now)
 {
-  if (orientationNumber >= ORIENTATION_BUFFER_SIZE)
+  addOrientation(newOrientation, now);
+  enableBluetooth();
+}
+
+void addOrientation(Orientation newOrientation, unsigned long now)
+{
+  if (timeEventsNumber >= TIME_EVENTS_BUFFER_SIZE)
   {
     orientationBufferOverflow = true;
     return;
   }
   Serial.print("New Orientation ");
   Serial.println(newOrientation);
-  orientation[orientationHead] = newOrientation;
-  orientationHead += 1;
-  orientationHead = orientationHead % ORIENTATION_BUFFER_SIZE;
-  orientationNumber += 1;
+  timeEvents[timeEventsHead].orientation = newOrientation;
+  timeEvents[timeEventsHead].timestampStart = now;
+  timeEventsHead += 1;
+  timeEventsHead = timeEventsHead % TIME_EVENTS_BUFFER_SIZE;
+  timeEventsNumber += 1;
 }
 
 Orientation lastOrientation()
 {
-  if (orientationNumber <= 0)
+  if (timeEventsNumber <= 0)
   {
     return NO_ORIENTATION;
   }
-  return orientation[(orientationHead - 1) % ORIENTATION_BUFFER_SIZE];
+  return timeEvents[(timeEventsHead - 1) % TIME_EVENTS_BUFFER_SIZE].orientation;
 }
 
 void printOrientations()
 {
-  for (int i = 0; i < orientationNumber; i++)
+  for (int i = 0; i < timeEventsNumber; i++)
   {
     Serial.print("Orientation");
     Serial.print(i);
     Serial.print(": ");
-    Serial.println(orientation[(i + orientationHead - orientationNumber) % ORIENTATION_BUFFER_SIZE]);
+    Serial.println(timeEvents[(i + timeEventsHead - timeEventsNumber) % TIME_EVENTS_BUFFER_SIZE].orientation);
+    Serial.println(timeEvents[(i + timeEventsHead - timeEventsNumber) % TIME_EVENTS_BUFFER_SIZE].timestampStart);
     if (orientationBufferOverflow)
     {
       Serial.println("Buffer overflow");
@@ -486,7 +516,7 @@ void enableBluetooth()
 void disableBluetooth()
 {
   bluetooth.end();
-  digitalWrite(BLUETOOTH_POWER, HIGH);
-  digitalWrite(BLUETOOTH_SERIAL_TX, HIGH);
+  digitalWrite(BLUETOOTH_POWER, LOW);
+  digitalWrite(BLUETOOTH_SERIAL_TX, LOW);
   bluetoothEnabled = false;
 }
