@@ -607,6 +607,7 @@ int getBatteryLevel()
   // REFS0 : Selects AVcc external reference
   // MUX3 MUX2 MUX1 : Selects 1.1V (VBG)
   ADMUX = bit(REFS0) | bit(MUX3) | bit(MUX2) | bit(MUX1);
+  delay(2);
   ADCSRA |= bit(ADSC); // start conversion
   while (ADCSRA & bit(ADSC))
   {
