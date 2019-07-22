@@ -319,7 +319,9 @@ char *buildMessage(bool nameRequested, bool eventsRequested, bool batteryRequest
       strcat(message, ",");
     }
     char batteryFormatted[15];
-    sprintf(batteryFormatted, "\"battery\":\"%s\"", getBatteryLevel());
+    char batteryLevel[5];
+    itoa(getBatteryLevel(), batteryLevel, 10);
+    sprintf(batteryFormatted, "\"battery\":\"%s\"", batteryLevel);
     strcat(message, batteryFormatted);
     firstField = false;
   }
@@ -595,7 +597,7 @@ void disableBluetooth()
   bluetoothEnabled = false;
 }
 
-const long internalReferenceVoltage = 1062;
+const long InternalReferenceVoltage = 1062;
 
 // The result is an approximation of the battery level. 3v should be 300.
 // When battry approaching 310 is time to signal that is almost discharged
@@ -609,6 +611,6 @@ int getBatteryLevel()
   while (ADCSRA & bit(ADSC))
   {
   }
-  int results = (((internalReferenceVoltage * 1024) / ADC) + 5) / 10;
+  int results = (((InternalReferenceVoltage * 1024) / ADC) + 5) / 10;
   return results;
 }
