@@ -195,13 +195,13 @@ void loop()
 
   unsigned long now = getTimestamp();
 
-  // if (getBatteryLevel() < MIN_BATTERY_THRESHOLD && now - lastRedLedBlink > RED_LED_BLINK_BACKOFF_S)
-  // {
-  //   Serial.println("Battery below threshold");
-  //   startLedBlink(10, 1, RED_LED_INDEX);
-  //   lastRedLedBlink = now;
-  //   return;
-  // }
+  if (getBatteryLevel() < MIN_BATTERY_THRESHOLD && now - lastRedLedBlink > RED_LED_BLINK_BACKOFF_S)
+  {
+    Serial.println("Battery below threshold");
+    startLedBlink(10, 1, RED_LED_INDEX);
+    lastRedLedBlink = now;
+    return;
+  }
 
   ADXL_ISR(now);
 
