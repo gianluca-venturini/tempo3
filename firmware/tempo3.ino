@@ -160,7 +160,7 @@ void setup()
   pinMode(BLUE_LED_PIN, OUTPUT);
   pinMode(BLUETOOTH_CONNECTION_ENSTABLISHED_PIN, INPUT);
   pinMode(BLUETOOTH_SERIAL_TX, OUTPUT);
-  pinMode(BLUETOOTH_POWER, OUTPUT); // Activate bluetooth serial
+  pinMode(BLUETOOTH_POWER, OUTPUT);
 
   resetHapticInteractions();
   disableBluetooth();
