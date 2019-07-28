@@ -1,4 +1,5 @@
 import electron from 'electron';
+import {ipcMain} from 'electron';
 import * as url from 'url';
 import * as path from 'path';
 
@@ -62,3 +63,24 @@ app.on('activate', function() {
     createWindow();
   }
 });
+
+const readyWindows = new Set<electron.WebContents>();
+
+function cleanupWindow(sender: electron.WebContents) {
+  readyWindows.delete(sender);
+}
+
+function listenApplicationReadyEvents() {
+  ipcMain.on('application-ready', (event: electron.Event) => {
+    readyWindows.add(event.sender);
+    event.sender.on('destroyed', () => cleanupWindow(event.sender));
+  });
+}
+
+listenApplicationReadyEvents();
+
+setInterval(() => {
+  readyWindows.forEach(sender => {
+    sender.send('test', {a: '123'});
+  });
+}, 1000);
