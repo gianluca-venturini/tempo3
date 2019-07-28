@@ -1,4 +1,6 @@
 import electron from 'electron';
+import * as url from 'url';
+import * as path from 'path';
 
 // Module to control application life.
 const app = electron.app;
@@ -9,10 +11,22 @@ let mainWindow: electron.BrowserWindow | null;
 
 function createWindow() {
   // Create the browser window.
-  mainWindow = new electron.BrowserWindow({width: 800, height: 600});
+  mainWindow = new electron.BrowserWindow({
+    width: 800,
+    height: 600,
+    webPreferences: {
+      nodeIntegration: true,
+    },
+  });
 
   // and load the index.html of the app.
-  mainWindow.loadURL(`file://${__dirname}/index.html`);
+  mainWindow.loadURL(
+    url.format({
+      pathname: path.join(__dirname, '../renderer/index.html'),
+      protocol: 'file:',
+      slashes: true,
+    }),
+  );
 
   // Open the DevTools.
   mainWindow.webContents.openDevTools();

@@ -1,14 +1,14 @@
 const path = require('path');
 const CopyWebpackPlugin = require('copy-webpack-plugin');
 
-module.exports = {
-  entry: './src/main.ts',
-  mode: process.env['MODE'] === 'production' ? 'production' : 'development',
-  output: {
-    path: path.resolve(__dirname, 'dist'),
-    filename: 'bundle.js',
+const mode = process.env.ENV || 'development';
+
+const commonConfig = {
+  node: {
+    __dirname: false,
   },
-  // devtool: 'inline-source-map',
+  mode,
+  devtool: mode !== 'production' ? 'inline-source-map' : undefined,
   module: {
     rules: [
       {
@@ -18,6 +18,33 @@ module.exports = {
       },
     ],
   },
-  plugins: [new CopyWebpackPlugin([{from: './src/static', to: 'static'}])],
-  target: 'electron-main',
+  resolve: {
+    extensions: ['.tsx', '.ts', '.js'],
+  },
 };
+
+module.exports = [
+  {
+    ...commonConfig,
+    target: 'electron-main',
+    entry: {
+      renderrer: './src/main/index.ts',
+    },
+    output: {
+      filename: 'bundle.js',
+      path: path.resolve(__dirname, 'dist/main'),
+    },
+  },
+  {
+    ...commonConfig,
+    target: 'electron-renderer',
+    entry: {
+      ui: './src/renderer/index.tsx',
+    },
+    output: {
+      filename: 'bundle.js',
+      path: path.resolve(__dirname, 'dist/renderer'),
+    },
+    plugins: [new CopyWebpackPlugin([{from: './src/renderer/static'}])],
+  },
+];
