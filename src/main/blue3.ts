@@ -62,6 +62,7 @@ export class Blue3 {
   };
 
   private handleDiscover = (peripheral: noble.Peripheral) => {
+    logger.info(`Discovered peripheral ${peripheral.id}`);
     if (this.peripheralIds && this.peripheralIds.has(peripheral.id)) {
       // Known device found
       noble.stopScanning();
