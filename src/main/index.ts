@@ -2,6 +2,7 @@ import electron from 'electron';
 import {ipcMain} from 'electron';
 import * as url from 'url';
 import * as path from 'path';
+import {Blue3} from './blue3';
 
 // Module to control application life.
 const app = electron.app;
@@ -31,7 +32,7 @@ function createWindow() {
   );
 
   // Open the DevTools.
-  mainWindow.webContents.openDevTools();
+  // mainWindow.webContents.openDevTools();
 
   // Emitted when the window is closed.
   mainWindow.on('closed', function() {
@@ -65,22 +66,43 @@ app.on('activate', function() {
 });
 
 const readyWindows = new Set<electron.WebContents>();
+const knownPeripheralIds = new Set<string>();
 
 function cleanupWindow(sender: electron.WebContents) {
   readyWindows.delete(sender);
+  if (readyWindows.size === 0) {
+    bluetooth.stopScanning();
+  }
 }
 
 function listenApplicationReadyEvents() {
   ipcMain.on('application-ready', (event: electron.Event) => {
+    if (readyWindows.size === 0) {
+      bluetooth.startScanning(Array.from(knownPeripheralIds));
+    }
     readyWindows.add(event.sender);
     event.sender.on('destroyed', () => cleanupWindow(event.sender));
   });
 }
 
+function sendEvent<T>(eventName: string, args: T) {
+  readyWindows.forEach(sender => {
+    sender.send(eventName, args);
+  });
+}
+
+const bluetooth = new Blue3(bluetoothStateChange, newDeviceDiscovered);
+
+function bluetoothStateChange() {
+  sendEvent('bluetooth-change', {state: bluetooth.getBluetoothState()});
+}
+
+function newDeviceDiscovered(peripheralId: string) {
+  knownPeripheralIds.add(peripheralId);
+}
+
 listenApplicationReadyEvents();
 
 setInterval(() => {
-  readyWindows.forEach(sender => {
-    sender.send('test', {a: '123'});
-  });
+  sendEvent('test', {a: '123'});
 }, 1000);

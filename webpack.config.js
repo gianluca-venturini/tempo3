@@ -2,6 +2,7 @@ const path = require('path');
 const CopyWebpackPlugin = require('copy-webpack-plugin');
 
 const mode = process.env.ENV || 'development';
+console.log('Mode: ', mode);
 
 const commonConfig = {
   node: {
@@ -19,7 +20,7 @@ const commonConfig = {
     ],
   },
   resolve: {
-    extensions: ['.tsx', '.ts', '.js'],
+    extensions: ['.tsx', '.ts', '.js', '.json'],
   },
 };
 
@@ -34,6 +35,15 @@ module.exports = [
       filename: 'bundle.js',
       path: path.resolve(__dirname, 'dist/main'),
     },
+    externals: [
+      function(context, request, callback) {
+        // Insert here modules that should be included directly from node_modules
+        if (/^noble$/.test(request)) {
+          return callback(null, 'commonjs ' + request);
+        }
+        callback();
+      },
+    ],
   },
   {
     ...commonConfig,
