@@ -1,12 +1,8 @@
 import * as React from 'react';
 import * as ReactDOM from 'react-dom';
-import electron from 'electron';
 import {ipcRenderer} from 'electron';
+import {App} from './App';
 
-ReactDOM.render(<div>Time 3</div>, document.getElementById('root'), () => {
+ReactDOM.render(<App />, document.getElementById('root'), () => {
   ipcRenderer.send('application-ready');
-});
-
-ipcRenderer.on('test', (_: electron.Event, args: {a: number}) => {
-  console.log(args);
 });
