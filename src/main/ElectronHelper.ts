@@ -1,5 +1,5 @@
 import electron from 'electron';
-import {ipcMain} from 'electron';
+import {ipcMain, globalShortcut} from 'electron';
 import {BluetoothContext} from './BluetoothContextJson';
 import {ElectronContext} from './ElectronContextJson';
 import * as url from 'url';
@@ -27,11 +27,16 @@ function createWindow(context: BluetoothContext & ElectronContext) {
     }),
   );
 
-  // Open the DevTools.
-  // mainWindow.webContents.openDevTools();
-
   mainWindow.on('closed', function() {
     context.readyWindows.delete(mainWindow);
+  });
+
+  globalShortcut.register('CommandOrControl+I', () => {
+    if (mainWindow.webContents.isDevToolsOpened()) {
+      mainWindow.webContents.closeDevTools();
+    } else {
+      mainWindow.webContents.openDevTools();
+    }
   });
 
   context.readyWindows.add(mainWindow);
