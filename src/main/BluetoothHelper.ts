@@ -1,11 +1,12 @@
-import {sendEvent} from './ElectronHelper';
+import {sendEvent, onEvent} from './ElectronHelper';
 import {BluetoothContext} from './BluetoothContextJson';
 import {ElectronContext} from './ElectronContextJson';
 import {BluetoothState} from './Blue3';
+import {Logger} from './Logger';
 
-export function registerBluetoothCallbacks(
-  context: BluetoothContext & ElectronContext,
-) {
+const logger = new Logger('BluetoothHelper');
+
+export function initBluetooth(context: BluetoothContext & ElectronContext) {
   function bluetoothStateChange() {
     const state = context.bluetooth.getBluetoothState();
 
@@ -21,7 +22,7 @@ export function registerBluetoothCallbacks(
     }
 
     sendEvent(
-      'bluetooth-change',
+      'bluetooth-status-change',
       {
         state,
       },
@@ -30,11 +31,29 @@ export function registerBluetoothCallbacks(
   }
 
   function newDeviceDiscovered(peripheralId: string) {
-    context.knownPeripheralIds.add(peripheralId);
+    sendEvent(
+      'bluetooth-new-device',
+      {
+        peripheralId,
+      },
+      context,
+    );
   }
 
   context.bluetooth.bluetoothStateChange = bluetoothStateChange;
   context.bluetooth.newDeviceDiscovered = newDeviceDiscovered;
+
+  onEvent('bluetooth-add-device', (event, args) => {
+    logger.info('Added bluetooth device', {peripheralId: args.peripheralId});
+    context.knownPeripheralIds.add(args.peripheralId);
+
+    // Restart the scanning including the new device
+    bluetoothStopScanning(context);
+    const state = context.bluetooth.getBluetoothState();
+    if (state === BluetoothState.POWER_ON && context.readyWindows.size > 0) {
+      bluetoothStartScanning(context);
+    }
+  });
 }
 
 export function bluetoothStartScanning(context: BluetoothContext) {

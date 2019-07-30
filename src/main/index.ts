@@ -1,6 +1,6 @@
-import {sendEvent, initApp} from './ElectronHelper';
+import {initApp} from './ElectronHelper';
 import {config} from './config';
-import {registerBluetoothCallbacks} from './BluetoothHelper';
+import {initBluetooth} from './BluetoothHelper';
 
 const context = {
   ...config.getBluetoothContext(),
@@ -8,8 +8,4 @@ const context = {
 };
 
 initApp(context);
-registerBluetoothCallbacks(context);
-
-setInterval(() => {
-  sendEvent('test', {a: '123'}, context);
-}, 1000);
+initBluetooth(context);

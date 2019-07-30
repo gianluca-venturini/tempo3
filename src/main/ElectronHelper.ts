@@ -5,6 +5,7 @@ import {ElectronContext} from './ElectronContextJson';
 import * as url from 'url';
 import path from 'path';
 import {bluetoothStopScanning, bluetoothStartScanning} from './BluetoothHelper';
+import {Events, EventArgType} from '../common/EventsJson';
 
 function createWindow(context: BluetoothContext & ElectronContext) {
   // Create the browser window.
@@ -83,12 +84,19 @@ function onApplucationReady(context: BluetoothContext & ElectronContext) {
   });
 }
 
-export function sendEvent<T>(
-  eventName: string,
-  args: T,
+export function sendEvent<E extends Events>(
+  eventName: E,
+  args: EventArgType[E],
   context: ElectronContext,
 ) {
   context.readyWindows.forEach(window => {
     window.webContents.send(eventName, args);
   });
+}
+
+export function onEvent<E extends Events>(
+  eventName: E,
+  callback: (event: electron.Event, args: EventArgType[E]) => void,
+) {
+  ipcMain.on(eventName, callback);
 }
