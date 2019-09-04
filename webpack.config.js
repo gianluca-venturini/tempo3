@@ -41,8 +41,15 @@ module.exports = [
         if (/^noble$/.test(request)) {
           return callback(null, 'commonjs ' + request);
         }
+        // Needed to import sequelize and sqlite3
+        if (request === 'sequelize') {
+          return callback(null, "require('sequelize')");
+        }
         callback();
       },
+      // This packages are not needed and required by `sequelize`
+      'pg',
+      'pg-hstore',
     ],
   },
   {

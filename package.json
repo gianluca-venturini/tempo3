@@ -6,7 +6,11 @@
   "scripts": {
     "build": "webpack",
     "start": "npm-run-all build run-electron",
-    "run-electron": "electron ."
+    "run-electron": "electron .",
+    "rebuild": "electron-rebuild -f -w sqlite3",
+    "postinstall": "install-app-deps",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder"
   },
   "repository": {
     "type": "git",
@@ -19,17 +23,23 @@
   },
   "homepage": "https://github.com/gianluca-venturini/tempo3#readme",
   "dependencies": {
-    "electron": "^5.0.8",
     "moment": "^2.24.0",
-    "noble": "^1.9.1"
+    "noble": "^1.9.1",
+    "sequelize": "^5.18.0",
+    "sqlite3": "^4.1.0"
   },
   "devDependencies": {
     "@material-ui/core": "^4.3.0",
+    "@types/lodash": "^4.14.138",
     "@types/material-ui": "^0.21.6",
     "@types/noble": "^0.0.39",
     "@types/react": "^16.8.23",
     "@types/react-dom": "^16.8.5",
     "copy-webpack-plugin": "^5.0.4",
+    "electron": "^5.0.8",
+    "electron-builder": "^21.2.0",
+    "electron-rebuild": "^1.8.6",
+    "lodash": "^4.17.15",
     "material-ui": "^0.20.2",
     "npm-run-all": "^4.1.5",
     "react": "^16.8.6",
@@ -38,5 +48,11 @@
     "typescript": "^3.5.3",
     "webpack": "^4.38.0",
     "webpack-cli": "^3.3.6"
+  },
+  "build": {
+    "appId": "time3",
+    "mac": {
+      "category": "category3"
+    }
   }
 }

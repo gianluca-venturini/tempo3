@@ -24,5 +24,6 @@ export class Logger {
       `[${this.moduleName} - ${moment().format('HH:mm:ss')}]: ${message}`,
       other,
     );
+    return new Error(`${message} ${other && JSON.stringify(other)}`);
   }
 }

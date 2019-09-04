@@ -6,6 +6,7 @@ import * as url from 'url';
 import path from 'path';
 import {bluetoothStopScanning, bluetoothStartScanning} from './BluetoothHelper';
 import {Events, EventArgType} from '../common/EventsJson';
+import {updateEvents as updateDeviceState} from './DeviceState';
 
 function createWindow(context: BluetoothContext & ElectronContext) {
   // Create the browser window.
@@ -65,7 +66,7 @@ export function initApp(context: ElectronContext & BluetoothContext) {
     }
   });
 
-  onApplucationReady(context);
+  onApplicationReady(context);
 }
 
 function cleanupWindow(
@@ -78,7 +79,7 @@ function cleanupWindow(
   }
 }
 
-function onApplucationReady(context: BluetoothContext & ElectronContext) {
+function onApplicationReady(context: BluetoothContext & ElectronContext) {
   ipcMain.on('application-ready', (event: electron.Event) => {
     context.readyWindows.forEach(window => {
       if (window.webContents === event.sender) {
@@ -87,6 +88,10 @@ function onApplucationReady(context: BluetoothContext & ElectronContext) {
       bluetoothStartScanning(context);
     });
   });
+
+  context.bluetooth.deviceStateUpdate = (state: DeviceState) => {
+    updateDeviceState(state);
+  };
 }
 
 export function sendEvent<E extends Events>(

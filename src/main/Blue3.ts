@@ -1,5 +1,6 @@
 import noble from 'noble';
 import {Logger} from './Logger';
+import {isArray, isString} from 'lodash';
 
 const ECHO_SERVICE_UUID = 'ffe0';
 const ECHO_CHARACTERISTIC_UUID = 'ffe1';
@@ -21,6 +22,7 @@ export class Blue3 {
   private isScanning: boolean = false;
   private peripheralIds?: Set<string>;
   private newDeviceDiscoveredCallback?: (peripheralId: string) => void;
+  private deviceStatusUpdateCallback?: (state: DeviceState) => void;
 
   constructor() {
     noble.on('stateChange', this.handleStateChange);
@@ -33,6 +35,10 @@ export class Blue3 {
 
   set newDeviceDiscovered(callback: (peripheralId: string) => void) {
     this.newDeviceDiscoveredCallback = callback;
+  }
+
+  set deviceStateUpdate(callback: (state: DeviceState) => void) {
+    this.deviceStatusUpdateCallback = callback;
   }
 
   getBluetoothState = () => {
@@ -82,9 +88,7 @@ export class Blue3 {
       // Known device found
       noble.stopScanning();
       logger.info(
-        `Connecting to '${peripheral.advertisement.localName}' ${
-          peripheral.id
-        }`,
+        `Connecting to '${peripheral.advertisement.localName}' ${peripheral.id}`,
       );
 
       const timestamp = new Date().getTime() / 1000;
@@ -151,9 +155,27 @@ export class Blue3 {
     });
   };
 
-  private handleEventsMessage = (message: any) => {
+  private handleEventsMessage = (message: object) => {
     logger.info('Correctly synched status ', message);
+    if (this.deviceStatusUpdateCallback) {
+      if (this.isState(message)) {
+        this.deviceStatusUpdateCallback(message);
+      } else {
+        throw logger.error('Impossible to parse bluetooth message', {message});
+      }
+    }
   };
+
+  private isState(message: any): message is DeviceState {
+    if (
+      isString(message.name) &&
+      isString(message.battery) &&
+      isArray(message.events)
+    ) {
+      return true;
+    }
+    return false;
+  }
 
   private handleNameMessage = (message: any, peripheralId: string) => {
     logger.info('Correctly found device name ', message);
@@ -203,9 +225,7 @@ export class Blue3 {
           peripheral.disconnect();
           receptionBuffer = undefined;
         } else if (receptionBuffer.length > messageLength) {
-          throw `Protocol violation: reception buffer larger than expected expeted: ${messageLength} actual ${
-            receptionBuffer.length
-          }.`;
+          throw `Protocol violation: reception buffer larger than expected expeted: ${messageLength} actual ${receptionBuffer.length}.`;
         }
       }
     });
